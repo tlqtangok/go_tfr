@@ -23,6 +23,18 @@ func main() {
 	rest := args[1:]
 
 	switch cmd {
+	case "-v":
+		fmt.Print("- tor-fr\n" +
+			"  version: 2019.04.01\n\n" +
+			"  author: Jidor Tang<tlqtangok@126.com>\n" +
+			"  homepage: http://jesson.tech:10241/tor_fr_readme.html\n\n" +
+			"  usage:\n" +
+			"    tfr tor <filename> -pw <your_password>\n" +
+			"    tfr fr jd_xx\n\n" +
+			"  description:\n" +
+			"    tor-fr is a productive tool that sync-up and share your \n" +
+			"    files,directories instantly, efficently and elegantly\n")
+		os.Exit(0)
 	case "tor", "t":
 		fn, pw := parseFnPw(rest)
 		execTor(cfg, fn, pw)

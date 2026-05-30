@@ -39,7 +39,7 @@ chmod +x /usr/local/bin/tfr
 Place `tfr.config` in the same directory as the binary (or current working directory):
 
 ```ini
-$redis_host = your.redis.host;
+$redis_host = "your.redis.host";
 $redis_port = 6379;
 $max_file_sz_in_bytes = 52429824;   # 50 MB
 $max_jd_incr = 256;
@@ -108,7 +108,7 @@ tfr sv 30
 ### Version / Help
 
 ```bash
-tfr version
+tfr -v
 ```
 
 ---
@@ -185,6 +185,23 @@ go build -ldflags="-s -w" -trimpath -o tfr .
 | Go TFR | Perl TFR | ✅ |
 | Perl TFR | Go TFR | ✅ |
 | Perl TFR | Perl TFR | ✅ |
+
+---
+
+## Performance Benchmark
+
+Tested locally against a remote Redis server (`jesson.tech:10240`) over the internet.  
+Files: 5 MB random text (printable ASCII) and 5 MB random binary.
+
+| Version  | File       | Upload  | Download |
+|----------|------------|---------|----------|
+| **Go**   | text 5MB   | 1143 ms |  8595 ms |
+| **Perl** | text 5MB   | 4206 ms | 14535 ms |
+| **Go**   | binary 5MB | 1057 ms | 11519 ms |
+| **Perl** | binary 5MB | 4665 ms | 18494 ms |
+
+**Go is ~3.7–4.4× faster on upload, ~1.6–1.7× faster on download** vs the original Perl version.  
+Bottleneck is network RTT to Redis; Go's advantage comes from faster startup, more efficient I/O, and native gzip.
 
 ---
 
