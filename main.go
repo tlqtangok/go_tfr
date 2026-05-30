@@ -1,78 +1,84 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
+
+	"golang.org/x/term"
 )
 
-const VERSION = "go-tfr v1.0 (compatible with TFR 2019.04.01)"
-
-func usage() {
-	fmt.Printf(`%s
-
-Usage:
-  tfr tor <file|-|folder>  [-pw <password>]        Send file/stdin/folder
-  tfr fr  [slot]           [-pw <password>] [-o <outfile>]  Receive
-  tfr show_visitor         [-pw <password>]         Show transfer history
-  tfr -v                                            Show version
-
-Config: tfr.config next to binary (or ./tfr.config)
-  $redis_host = 127.0.0.1;
-  $redis_port = 10240;
-  $max_file_sz_in_bytes = 52429824;
-  $max_jd_incr = 256;
-`, VERSION)
-}
-
 func main() {
-	if len(os.Args) < 2 {
-		usage()
-		os.Exit(0)
-	}
-
 	cfg := loadConfig()
 
-	// Parse global flags
 	args := os.Args[1:]
-	var password string
-	var outFile string
-	var filtered []string
-
-	for i := 0; i < len(args); i++ {
-		switch args[i] {
-		case "-pw":
-			if i+1 < len(args) {
-				i++
-				password = args[i]
-			}
-		case "-o":
-			if i+1 < len(args) {
-				i++
-				outFile = args[i]
-			}
-		default:
-			filtered = append(filtered, args[i])
-		}
-	}
-	args = filtered
-
 	if len(args) == 0 {
-		usage()
+		printUsage()
 		os.Exit(0)
 	}
 
-	switch args[0] {
+	cmd := args[0]
+	rest := args[1:]
+
+	switch cmd {
 	case "tor", "t":
-		execTor(cfg, args[1:], password)
+		fn, pw := parseFnPw(rest)
+		execTor(cfg, fn, pw)
 	case "fr", "f":
-		execFr(cfg, args[1:], password, outFile)
-	case "show_visitor":
-		showVisitor(cfg, password)
-	case "-v", "--version", "version":
-		fmt.Println(VERSION)
+		fn, pw := parseFnPw(rest)
+		execFr(cfg, fn, pw, "")
+	case "sv":
+		count := 0
+		if len(rest) > 0 {
+			count, _ = strconv.Atoi(rest[0])
+		}
+		showVisitor(cfg, count)
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", args[0])
-		usage()
+		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
+		printUsage()
 		os.Exit(1)
 	}
+}
+
+// parseFnPw parses [fn] [-pw password] or [-pw password] [fn] args.
+func parseFnPw(args []string) ([]string, string) {
+	pw := ""
+	var fnArgs []string
+	for i := 0; i < len(args); i++ {
+		if args[i] == "-pw" && i+1 < len(args) {
+			pw = args[i+1]
+			i++
+		} else {
+			fnArgs = append(fnArgs, args[i])
+		}
+	}
+	return fnArgs, pw
+}
+
+// readPassword reads a password without echo (matches Perl ReadMode noecho).
+func readPassword(prompt string) string {
+	fmt.Fprint(os.Stderr, prompt)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Fprintln(os.Stderr)
+		if err != nil {
+			return ""
+		}
+		return strings.TrimSpace(string(pw))
+	}
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		return strings.TrimSpace(scanner.Text())
+	}
+	return ""
+}
+
+func printUsage() {
+	fmt.Print("TFR - Transfer via Redis (Go rewrite)\n" +
+		"Usage:\n" +
+		"  tfr tor [file|folder] [-pw password]   send (t = alias)\n" +
+		"  tfr fr  [jd_N|N]      [-pw password]   receive (f = alias)\n" +
+		"  tfr sv  [count]                         show visitor log\n")
 }

@@ -4,12 +4,17 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
-
-	"github.com/redis/go-redis/v9"
+	"time"
 )
 
 // execTor implements the tor/t command.
+// Key behaviors matching Perl exec_tor_process:
+// - Print slot BEFORE processing file (Perl outputs jd_xx then reads file)
+// - Skip gzip for .tar.gz files (already compressed)
+// - Use pipeline for Redis writes (performance)
+// - Clear all jd_* keys on slot wrap to 0
 func execTor(cfg Config, args []string, password string) {
 	rdb := newRedisClient(cfg)
 	defer rdb.Close()
@@ -18,7 +23,6 @@ func execTor(cfg Config, args []string, password string) {
 
 	var filename string
 	var rawData []byte
-	var isFolder bool
 
 	if len(args) == 0 || args[0] == "-" {
 		filename = "txt.txt"
@@ -32,19 +36,19 @@ func execTor(cfg Config, args []string, password string) {
 		target := args[0]
 		info, err := os.Stat(target)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERR: stat %s: %v\n", target, err)
-			os.Exit(1)
-		}
-		if info.IsDir() {
-			isFolder = true
-			filename = "FOLDER_" + info.Name()
+			// Non-existent arg: treat as inline string (like Perl)
+			rawData = append([]byte(target), '\n')
+			filename = "txt.txt"
+		} else if info.IsDir() {
+			// Folder: tar.gz it; filename = FOLDER_name.tar.gz (Perl convention)
+			filename = fmt.Sprintf("FOLDER_%s.tar.gz", info.Name())
 			rawData, err = tarFolder(target)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERR: tar folder: %v\n", err)
 				os.Exit(1)
 			}
 		} else {
-			filename = info.Name()
+			filename = filepath.Base(target)
 			rawData, err = os.ReadFile(target)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "ERR: read file: %v\n", err)
@@ -53,16 +57,25 @@ func execTor(cfg Config, args []string, password string) {
 		}
 	}
 
-	_ = isFolder
-
 	if int64(len(rawData)) > cfg.MaxFileSz {
 		fmt.Fprintf(os.Stderr, "ERR: file too large (%d bytes, max %d)\n", len(rawData), cfg.MaxFileSz)
 		os.Exit(1)
 	}
 
+	// Claim slot first — print jd_XX BEFORE processing (matches Perl exec_tor_process line order)
+	slot := getSlot(rdb, cfg.MaxJdIncr)
+	jdXX := fmt.Sprintf("jd_%d", slot)
+	fmt.Println(jdXX)
+
+	// Housekeeping: clear all old keys on slot wrap (Perl: clear_all_jd_xx_and_pw_prefix)
+	if slot == 0 {
+		clearAllJdKeys(rdb)
+	}
+
+	// Gzip: skip for .tar.gz files (matches Perl: $fn !~ /\.tar\.gz$/)
 	payload := rawData
 	isGzip := false
-	if len(rawData) > GZIP_THRESHOLD {
+	if len(rawData) > GZIP_THRESHOLD && !strings.HasSuffix(filename, ".tar.gz") {
 		compressed, err := gzipBytes(rawData)
 		if err == nil && len(compressed) < len(rawData) {
 			payload = compressed
@@ -71,55 +84,31 @@ func execTor(cfg Config, args []string, password string) {
 	}
 
 	crc := mycrc32(rawData)
-	slot := getSlot(rdb, cfg.MaxJdIncr)
 	slotKey := fmt.Sprintf("%s%d", JD_SLOT_PREFIX, slot)
 	fnKey := fmt.Sprintf("%s%d", FNAME_PREFIX, slot)
 
 	header := buildMetaHeader(isGzip, filename, crc)
-	value := append(header, payload...)
+	value := make([]byte, 0, len(header)+len(payload))
+	value = append(value, header...)
+	value = append(value, payload...)
 
+	startTime := time.Now()
+
+	// Pipeline: SET slot + SET filename + optional SET password — single round trip
+	pipe := rdb.Pipeline()
+	pipe.Set(ctx, slotKey, value, EXPIRY)
+	pipe.Set(ctx, fnKey, filename, EXPIRY)
 	if password != "" {
 		pwKey := fmt.Sprintf("%s%d", PW_PREFIX, slot)
 		pwCrc := mycrc32([]byte(password))
-		rdb.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
+		pipe.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
 	}
-
-	rdb.Set(ctx, fnKey, filename, EXPIRY)
-	recordVisitor(rdb, slot, len(rawData), "tor")
-	redisSetWithProgress(rdb, slotKey, value, "")
-
-	fmt.Printf("jd_%d\n", slot)
-}
-
-func recordVisitor(rdb *redis.Client, slot int, size int, op string) {
-	entry := fmt.Sprintf("slot=%d size=%d op=%s", slot, size, op)
-	rdb.LPush(ctx, "jd_visitor", entry)
-	rdb.LTrim(ctx, "jd_visitor", 0, 999)
-}
-
-func showVisitor(cfg Config, password string) {
-	rdb := newRedisClient(cfg)
-	defer rdb.Close()
-
-	checkVersion(rdb)
-
-	if password != "" {
-		stored, err := rdb.Get(ctx, "VISITOR_PW").Result()
-		if err == nil {
-			inputCrc := fmt.Sprintf("%d", mycrc32([]byte(password)))
-			if inputCrc != strings.TrimSpace(stored) {
-				fmt.Println("ERR: wrong password")
-				os.Exit(1)
-			}
-		}
-	}
-
-	entries, err := rdb.LRange(ctx, "jd_visitor", 0, 49).Result()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERR: %v\n", err)
+	if _, err := pipe.Exec(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "ERR: redis pipeline: %v\n", err)
 		os.Exit(1)
 	}
-	for _, e := range entries {
-		fmt.Println(e)
-	}
+
+	cost := time.Since(startTime).Seconds()
+	ip := getClientIP(rdb)
+	recordVisitor(rdb, slot, len(rawData), cost, "tor", ip, filename)
 }

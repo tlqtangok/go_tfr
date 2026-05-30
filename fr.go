@@ -1,15 +1,14 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
-// execFr implements the `fr`/`f` command.
-// - No slot arg: auto-uses current jd_incr (latest sent slot)
-// - Accepts both "51" and "jd_51"
-// - Prints content to stdout, saves to file, prints metadata to stderr
+// execFr implements the fr/f command (matches Perl exec_fr_process).
 func execFr(cfg Config, args []string, password string, outFile string) {
 	rdb := newRedisClient(cfg)
 	defer rdb.Close()
@@ -19,36 +18,47 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 	var slotNum string
 
 	if len(args) > 0 {
-		// Strip jd_ prefix if present
+		// Accept "51" or "jd_51"
 		slotNum = strings.TrimPrefix(args[0], JD_SLOT_PREFIX)
 	} else {
-		// No arg: use current jd_incr to find last sent slot
-		val, err := rdb.Get(ctx, JD_INCR_KEY).Int64()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "ERR: get jd_incr: %v\n", err)
-			os.Exit(1)
-		}
-		slotNum = fmt.Sprintf("%d", (val-1+int64(cfg.MaxJdIncr))%int64(cfg.MaxJdIncr))
+		// No arg: GET jd_incr directly (matches Perl get_jd_xx_from_incr)
+		slotNum = getCurrentSlotNum(rdb)
 	}
 
 	slotKey := fmt.Sprintf("%s%s", JD_SLOT_PREFIX, slotNum)
-
-	// Password check
 	pwKey := fmt.Sprintf("%s%s", PW_PREFIX, slotNum)
+
+	// Password check: up to 3 interactive attempts; only 1 if -pw was given
 	storedPw, err := rdb.Get(ctx, pwKey).Result()
 	if err == nil && storedPw != "" {
-		if password == "" {
-			fmt.Fprint(os.Stderr, "请输入邀请码：")
-			fmt.Scan(&password)
+		const maxAttempts = 3
+		ok := false
+		for attempt := 1; attempt <= maxAttempts; attempt++ {
+			pw := password
+			if pw == "" {
+				pw = readPassword("\xe8\xaf\xb7\xe8\xbe\x93\xe5\x85\xa5\xe9\x82\x80\xe8\xaf\xb7\xe7\xa0\x81\xef\xbc\x9a")
+			}
+			inputCrc := fmt.Sprintf("%d", mycrc32([]byte(pw)))
+			if inputCrc == strings.TrimSpace(storedPw) {
+				ok = true
+				break
+			}
+			if password != "" {
+				fmt.Fprintln(os.Stderr, "ERR: wrong password")
+				os.Exit(1)
+			}
+			if attempt < maxAttempts {
+				fmt.Fprintf(os.Stderr, "wrong password, try again (%d/%d)\n", attempt, maxAttempts)
+			}
 		}
-		inputCrc := fmt.Sprintf("%d", mycrc32([]byte(password)))
-		if inputCrc != strings.TrimSpace(storedPw) {
+		if !ok {
 			fmt.Fprintln(os.Stderr, "ERR: wrong password")
 			os.Exit(1)
 		}
 	}
 
-	raw := redisGetWithProgress(rdb, slotKey, "")
+	startTime := time.Now()
+	raw := redisGet(rdb, slotKey)
 
 	isGzip, filename, storedCrc, payload, err := parseMetaHeader(raw)
 	if err != nil {
@@ -73,33 +83,97 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		os.Exit(1)
 	}
 
-	isFolder := strings.HasPrefix(filename, "FOLDER_")
+	isFolder := strings.HasPrefix(filename, "FOLDER_") && strings.HasSuffix(filename, ".tar.gz")
+	cost := time.Since(startTime).Seconds()
+	ip := getClientIP(rdb)
+	slotInt := parseSlotInt(slotNum)
 
 	if isFolder {
-		// Folder: extract, no stdout content
+		folderName := strings.TrimSuffix(strings.TrimPrefix(filename, "FOLDER_"), ".tar.gz")
 		destDir := "."
 		if outFile != "" {
 			destDir = outFile
 		}
-		if err := untarBytes(finalData, destDir); err != nil {
+		if !promptOverwrite(folderName) {
+			os.Exit(1)
+		}
+		if err := untarToDir(finalData, destDir); err != nil {
 			fmt.Fprintf(os.Stderr, "ERR: untar: %v\n", err)
 			os.Exit(1)
 		}
-		folderName := strings.TrimPrefix(filename, "FOLDER_")
-		fmt.Fprintf(os.Stderr, "\n- folder extracted to %s/%s\n", destDir, folderName)
+		fmt.Fprintln(os.Stderr, "- folder save to "+folderName)
 	} else {
-		// Regular file: print content to stdout, save to file
-		os.Stdout.Write(finalData)
-
 		saveName := filename
 		if outFile != "" {
 			saveName = outFile
+		}
+		if saveName != "txt.txt" && !promptOverwrite(saveName) {
+			os.Exit(1)
 		}
 		if err := os.WriteFile(saveName, finalData, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "ERR: write %s: %v\n", saveName, err)
 			os.Exit(1)
 		}
-		fmt.Fprintf(os.Stderr, "\n- file content save to %s\n", saveName)
+		echoSimplifiedFC(saveName, finalData)
 	}
+
+	recordVisitor(rdb, slotInt, len(finalData), cost, "fr", ip, filename)
 }
 
+// echoSimplifiedFC prints file content (max 14 lines, truncated) then save-message to stderr.
+// Matches Perl echo_simplified_fc exactly.
+func echoSimplifiedFC(filename string, data []byte) {
+	if isTextData(data) {
+		lines := strings.Split(string(data), "\n")
+		if len(lines) > 0 && lines[len(lines)-1] == "" {
+			lines = lines[:len(lines)-1]
+		}
+		const maxLines = 14
+		if len(lines) > maxLines {
+			half := maxLines / 2
+			truncated := make([]string, 0, maxLines+1)
+			truncated = append(truncated, lines[:half]...)
+			truncated = append(truncated, " ...")
+			truncated = append(truncated, lines[len(lines)-half:]...)
+			lines = truncated
+		}
+		// Perl: say "\n", @fc  — blank line before, extra newline after last line
+		fmt.Print("\n")
+		fmt.Println(strings.Join(lines, "\n"))
+	}
+	fmt.Fprintln(os.Stderr, "- file content save to "+filename)
+}
+
+// promptOverwrite checks if path exists and asks user to confirm overwrite.
+// Matches Perl gen_overwrite_struct + real_run_prompt_and_input_yes.
+func promptOverwrite(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return true
+	}
+	typeStr := "file"
+	if info.IsDir() {
+		typeStr = "folder"
+	}
+	fmt.Fprintf(os.Stderr, "- exists %s %s, would you like to overwrite? (yes | no)\n", typeStr, path)
+	scanner := bufio.NewScanner(os.Stdin)
+	if scanner.Scan() {
+		answer := strings.TrimSpace(scanner.Text())
+		if answer == "yes" || answer == "y" || answer == "Y" || answer == "YES" {
+			if info.IsDir() {
+				os.RemoveAll(path)
+			} else {
+				os.Remove(path)
+			}
+			return true
+		}
+	}
+	fmt.Fprintf(os.Stderr, "- exist %s !\n", path)
+	return false
+}
+
+func parseSlotInt(slotNum string) int {
+	var n int
+	fmt.Sscanf(slotNum, "%d", &n)
+	return n
+}

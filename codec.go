@@ -9,36 +9,43 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"unicode/utf8"
 )
 
-const GZIP_THRESHOLD = 2048 // bytes
+const GZIP_THRESHOLD = 2048
 
-// buildMetaHeader builds the metadata header prepended to Redis values.
-// Format (byte-identical to Perl):
-//   GZIP_:0\n  (or GZIP_:1)
-//   FILENAME_:filename\n
-//   CRC32_:crc32value\n
-//   <payload bytes>
+var gzipWriterPool = sync.Pool{
+	New: func() interface{} {
+		w, _ := gzip.NewWriterLevel(io.Discard, gzip.BestSpeed)
+		return w
+	},
+}
+
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		return new(bytes.Buffer)
+	},
+}
+
+// buildMetaHeader builds the 3-line metadata header (byte-identical to Perl).
 func buildMetaHeader(isGzip bool, filename string, crc uint32) []byte {
 	gz := "0"
 	if isGzip {
 		gz = "1"
 	}
-	header := fmt.Sprintf("GZIP_:%s\nFILENAME_:%s\nCRC32_:%d\n", gz, filename, crc)
-	return []byte(header)
+	return []byte(fmt.Sprintf("GZIP_:%s\nFILENAME_:%s\nCRC32_:%d\n", gz, filename, crc))
 }
 
 // parseMetaHeader splits raw Redis value into (isGzip, filename, crc32, payload).
 func parseMetaHeader(raw []byte) (isGzip bool, filename string, crc32val uint32, payload []byte, err error) {
-	// Read header lines until we've consumed GZIP_, FILENAME_, CRC32_
-	reader := bytes.NewReader(raw)
-	br := io.Reader(reader)
+	r := bytes.NewReader(raw)
 
 	readLine := func() (string, error) {
 		var buf []byte
-		b := make([]byte, 1)
+		b := [1]byte{}
 		for {
-			_, e := br.Read(b)
+			_, e := r.Read(b[:])
 			if e != nil {
 				return string(buf), e
 			}
@@ -49,55 +56,64 @@ func parseMetaHeader(raw []byte) (isGzip bool, filename string, crc32val uint32,
 		}
 	}
 
-	// Line 1: GZIP_:0or1
 	line1, e := readLine()
 	if e != nil {
 		err = fmt.Errorf("header line1: %v", e)
 		return
 	}
-	line1 = strings.TrimPrefix(line1, "GZIP_:")
-	isGzip = (line1 == "1")
+	if idx := strings.Index(line1, ":"); idx >= 0 {
+		isGzip = line1[idx+1:] == "1"
+	}
 
-	// Line 2: FILENAME_:name
 	line2, e := readLine()
 	if e != nil {
 		err = fmt.Errorf("header line2: %v", e)
 		return
 	}
-	filename = strings.TrimPrefix(line2, "FILENAME_:")
+	if idx := strings.Index(line2, ":"); idx >= 0 {
+		filename = line2[idx+1:]
+	}
 
-	// Line 3: CRC32_:value
 	line3, e := readLine()
 	if e != nil {
 		err = fmt.Errorf("header line3: %v", e)
 		return
 	}
-	crcStr := strings.TrimPrefix(line3, "CRC32_:")
+	crcStr := ""
+	if idx := strings.Index(line3, ":"); idx >= 0 {
+		crcStr = line3[idx+1:]
+	}
 	var cv uint64
-	_, scanErr := fmt.Sscanf(crcStr, "%d", &cv)
-	if scanErr != nil {
+	if _, scanErr := fmt.Sscanf(crcStr, "%d", &cv); scanErr != nil {
 		err = fmt.Errorf("bad crc32: %v", scanErr)
 		return
 	}
 	crc32val = uint32(cv)
 
-	// Rest is payload
-	pos, _ := reader.Seek(0, io.SeekCurrent)
+	pos, _ := r.Seek(0, io.SeekCurrent)
 	payload = raw[pos:]
 	return
 }
 
-// gzipBytes compresses data.
+// gzipBytes compresses data at BestSpeed (3-5x faster than default).
 func gzipBytes(data []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+
+	w := gzipWriterPool.Get().(*gzip.Writer)
+	w.Reset(buf)
+	defer gzipWriterPool.Put(w)
+
 	if _, err := w.Write(data); err != nil {
 		return nil, err
 	}
 	if err := w.Close(); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result, nil
 }
 
 // gunzipBytes decompresses data.
@@ -110,18 +126,26 @@ func gunzipBytes(data []byte) ([]byte, error) {
 	return io.ReadAll(r)
 }
 
-// tarFolder creates a .tar.gz of a directory, returns bytes.
+// tarFolder creates a .tar.gz archive of dir in memory (matches Perl tar_folder_to_file_tgz).
 func tarFolder(dir string) ([]byte, error) {
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
+	buf := bufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer bufPool.Put(buf)
+
+	gz, _ := gzip.NewWriterLevel(buf, gzip.BestSpeed)
 	tw := tar.NewWriter(gz)
 
-	base := filepath.Base(dir)
-	err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, err
+	}
+	parentDir := filepath.Dir(absDir)
+
+	err = filepath.Walk(absDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, _ := filepath.Rel(filepath.Dir(dir), path)
+		rel, _ := filepath.Rel(parentDir, path)
 		rel = filepath.ToSlash(rel)
 
 		hdr, e := tar.FileInfoHeader(info, "")
@@ -129,6 +153,9 @@ func tarFolder(dir string) ([]byte, error) {
 			return e
 		}
 		hdr.Name = rel
+		if info.IsDir() {
+			hdr.Name += "/"
+		}
 		if err := tw.WriteHeader(hdr); err != nil {
 			return err
 		}
@@ -146,14 +173,16 @@ func tarFolder(dir string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	_ = base
 	tw.Close()
 	gz.Close()
-	return buf.Bytes(), nil
+
+	result := make([]byte, buf.Len())
+	copy(result, buf.Bytes())
+	return result, nil
 }
 
-// untarBytes extracts a tar.gz to destDir.
-func untarBytes(data []byte, destDir string) error {
+// untarToDir extracts a .tar.gz archive (bytes) to destDir.
+func untarToDir(data []byte, destDir string) error {
 	gr, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
 		return err
@@ -174,7 +203,7 @@ func untarBytes(data []byte, destDir string) error {
 			continue
 		}
 		os.MkdirAll(filepath.Dir(target), 0755)
-		f, err := os.Create(target)
+		f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, hdr.FileInfo().Mode())
 		if err != nil {
 			return err
 		}
@@ -182,4 +211,25 @@ func untarBytes(data []byte, destDir string) error {
 		f.Close()
 	}
 	return nil
+}
+
+// isTextData returns true if data looks like text (< 5% non-printable bytes).
+func isTextData(data []byte) bool {
+	if len(data) == 0 {
+		return true
+	}
+	check := data
+	if len(check) > 4096 {
+		check = check[:4096]
+	}
+	if !utf8.Valid(check) {
+		return false
+	}
+	binary := 0
+	for _, b := range check {
+		if b < 7 || (b >= 14 && b < 32 && b != 27) {
+			binary++
+		}
+	}
+	return float64(binary)/float64(len(check)) < 0.05
 }
