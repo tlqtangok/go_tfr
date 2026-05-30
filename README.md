@@ -67,10 +67,13 @@ Windows: download `tfr_windows_amd64.exe`, rename to `tfr.exe`, place in a folde
 Place `tfr.config` in the same directory as the binary (or current working directory):
 
 ```ini
+# [required]
 $redis_host = "your.redis.host";
 $redis_port = 6379;
-$max_file_sz_in_bytes = 52429824;   # 50 MB
-$max_jd_incr = 256;
+
+# [optional] defaults shown
+# $max_file_sz_in_bytes = 52434944;   # 50 MB + 5 KB
+# $max_jd_incr = 256;
 ```
 
 ---

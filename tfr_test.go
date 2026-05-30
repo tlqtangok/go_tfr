@@ -29,6 +29,23 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 
+	// Write a test config pointing to local Redis so tests don't need a remote server.
+	testCfg, cfgErr := os.CreateTemp("", "tfr_test_*.config")
+	if cfgErr != nil {
+		fmt.Fprintln(os.Stderr, "create test config:", cfgErr)
+		os.Exit(1)
+	}
+	testCfg.WriteString("$redis_host = \"localhost\";\n$redis_port = 6379;\n")
+	testCfg.Close()
+	os.Setenv("TFR_CONFIG", testCfg.Name())
+	defer os.Remove(testCfg.Name())
+
+	// Seed the version key in local Redis so checkVersion passes.
+	seedCmd := exec.Command("redis-cli", "SET", "TOR_FR_VERSION_KEY", "2019.04.01")
+	if out, err := seedCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: could not seed Redis version key: %v\n%s\n", err, out)
+	}
+
 	code := m.Run()
 	os.Remove(tfrBin)
 	os.Exit(code)

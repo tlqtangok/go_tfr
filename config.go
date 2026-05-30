@@ -19,9 +19,9 @@ type Config struct {
 
 func defaultConfig() Config {
 	return Config{
-		Host:      "127.0.0.1",
+		Host:      "localhost",
 		Port:      6379,
-		MaxFileSz: 52429824, // 50MB + 5KB
+		MaxFileSz: 50*1024*1024 + 5*1024, // 50MB + 5KB, matches Perl default
 		MaxJdIncr: 256,
 	}
 }
@@ -38,14 +38,24 @@ func configPath() string {
 // loadConfig parses a Perl-style config:  $varname = value;
 func loadConfig() Config {
 	cfg := defaultConfig()
-	path := configPath()
+
+	// Allow test/CI override via env var
+	var path string
+	if envPath := os.Getenv("TFR_CONFIG"); envPath != "" {
+		path = envPath
+	} else {
+		path = configPath()
+	}
+
 	f, err := os.Open(path)
-	if err != nil {
+	if err != nil && os.Getenv("TFR_CONFIG") == "" {
 		// Also try current dir
 		f, err = os.Open("tfr.config")
 		if err != nil {
 			return cfg
 		}
+	} else if err != nil {
+		return cfg
 	}
 	defer f.Close()
 
