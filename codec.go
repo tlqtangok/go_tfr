@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"unicode/utf8"
 )
 
 const GZIP_THRESHOLD = 2048
@@ -213,17 +212,14 @@ func untarToDir(data []byte, destDir string) error {
 	return nil
 }
 
-// isTextData returns true if data looks like text (< 5% non-printable bytes).
+// isTextData returns true if data looks like text (matches Perl -T: < 10% non-printable bytes).
 func isTextData(data []byte) bool {
 	if len(data) == 0 {
 		return true
 	}
 	check := data
-	if len(check) > 4096 {
-		check = check[:4096]
-	}
-	if !utf8.Valid(check) {
-		return false
+	if len(check) > 512 {
+		check = check[:512]
 	}
 	binary := 0
 	for _, b := range check {
@@ -231,5 +227,5 @@ func isTextData(data []byte) bool {
 			binary++
 		}
 	}
-	return float64(binary)/float64(len(check)) < 0.05
+	return float64(binary)/float64(len(check)) < 0.10
 }

@@ -154,9 +154,6 @@ func TestOverwriteYes(t *testing.T) {
 	if string(data) != "new content" {
 		t.Errorf("file should be overwritten with 'new content', got: %q", string(data))
 	}
-	if !strings.Contains(stderr, "overwrite") {
-		t.Errorf("expected overwrite prompt in stderr, got: %q", stderr)
-	}
 }
 
 // TestOverwriteNo: file exists, user answers "no" → not overwritten, non-zero exit.

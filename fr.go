@@ -121,7 +121,11 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 }
 
 // echoSimplifiedFC prints file content (max 14 lines, truncated) then save-message to stderr.
-// Matches Perl echo_simplified_fc exactly.
+// Matches Perl echo_simplified_fc exactly:
+//   - Text detection via isTextData (Perl -T operator, ~10% threshold)
+//   - Truncation: first 8 lines (0..$half inclusive) + " ..." + last 7 lines
+//   - Output: say "\n", @fc  → blank line + content lines + trailing blank line (STDOUT)
+//   - "- file content save to X" → STDERR
 func echoSimplifiedFC(filename string, data []byte) {
 	if isTextData(data) {
 		lines := strings.Split(string(data), "\n")
@@ -130,16 +134,17 @@ func echoSimplifiedFC(filename string, data []byte) {
 		}
 		const maxLines = 14
 		if len(lines) > maxLines {
-			half := maxLines / 2
-			truncated := make([]string, 0, maxLines+1)
-			truncated = append(truncated, lines[:half]...)
+			half := maxLines / 2 // 7
+			truncated := make([]string, 0, maxLines+2)
+			truncated = append(truncated, lines[:half+1]...) // first 8 lines (0..7, inclusive — matches Perl @fc[0..$half])
 			truncated = append(truncated, " ...")
-			truncated = append(truncated, lines[len(lines)-half:]...)
+			truncated = append(truncated, lines[len(lines)-half:]...) // last 7
 			lines = truncated
 		}
-		// Perl: say "\n", @fc  — blank line before, extra newline after last line
+		// Perl: say "\n", @fc  — blank line before content, extra blank line after (say adds \n)
 		fmt.Print("\n")
 		fmt.Println(strings.Join(lines, "\n"))
+		fmt.Println() // trailing blank line — matches Perl say's implicit \n after @fc
 	}
 	fmt.Fprintln(os.Stderr, "- file content save to "+filename)
 }
@@ -155,7 +160,8 @@ func promptOverwrite(path string) bool {
 	if info.IsDir() {
 		typeStr = "folder"
 	}
-	fmt.Fprintf(os.Stderr, "- exists %s %s, would you like to overwrite? (yes | no)\n", typeStr, path)
+	// Perl: say $hash_->{overwrite_stat} — uses plain `say` which defaults to STDOUT
+	fmt.Fprintf(os.Stdout, "- exists %s %s, would you like to overwrite? (yes | no)\n", typeStr, path)
 	scanner := bufio.NewScanner(os.Stdin)
 	if scanner.Scan() {
 		answer := strings.TrimSpace(scanner.Text())
