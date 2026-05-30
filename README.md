@@ -24,13 +24,41 @@ Wire-compatible with the Perl version: Go ↔ Perl cross-transfer works seamless
 
 ## Install
 
-Download the binary for your platform from [Releases](https://github.com/tlqtangok/go_tfr/releases) and put it in your `$PATH`:
+### Choose Your Binary
+
+| File | OS | Architecture | Notes |
+|------|----|-------------|-------|
+| `tfr_linux_amd64` | Linux | x86_64 (64-bit) | **Most common** — servers, desktops, WSL |
+| `tfr_linux_arm64` | Linux | ARM64 | Raspberry Pi 4+, AWS Graviton, Apple M1 (Linux VM) |
+| `tfr_windows_amd64.exe` | Windows | x86_64 (64-bit) | Windows 10/11, rename to `tfr.exe` |
+| `tfr_darwin_amd64` | macOS | x86_64 (Intel) | Intel Mac (pre-2021) |
+
+> **How to check your platform:**
+> - Linux: `uname -m` → `x86_64` = amd64, `aarch64` = arm64
+> - macOS: `uname -m` → `x86_64` = Intel, `arm64` = Apple Silicon (run under Rosetta or use Linux ARM64 in VM)
+> - Windows: Settings → System → About → "64-bit operating system, x64-based processor"
+
+> **About UPX compression:** All Linux/Windows binaries are compressed with UPX (`--best`).  
+> They self-decompress in memory at startup (~10–20 ms overhead, zero runtime impact).  
+> macOS binaries are **not** UPX-compressed (macOS 10.15+ rejects UPX-packed binaries due to code signing).
+
+### Quick Install
 
 ```bash
 # Linux x86_64
 curl -L https://github.com/tlqtangok/go_tfr/releases/latest/download/tfr_linux_amd64 -o /usr/local/bin/tfr
 chmod +x /usr/local/bin/tfr
+
+# Linux ARM64 (Raspberry Pi, Graviton)
+curl -L https://github.com/tlqtangok/go_tfr/releases/latest/download/tfr_linux_arm64 -o /usr/local/bin/tfr
+chmod +x /usr/local/bin/tfr
+
+# macOS (Intel)
+curl -L https://github.com/tlqtangok/go_tfr/releases/latest/download/tfr_darwin_amd64 -o /usr/local/bin/tfr
+chmod +x /usr/local/bin/tfr
 ```
+
+Windows: download `tfr_windows_amd64.exe`, rename to `tfr.exe`, place in a folder on your `%PATH%`.
 
 ---
 
