@@ -167,15 +167,7 @@ func showVisitor(cfg Config, count int) {
 	ip := getClientIP(rdb)
 	needPW := !(strings.HasPrefix(ip, "116.") || ip == "127.0.0.1")
 	if needPW {
-		stored, err := rdb.Get(ctx, "VISITOR_PW").Result()
-		if err == nil && stored != "" {
-			pw := readPassword("Please enter password: ")
-			inputCrc := fmt.Sprintf("%d", mycrc32([]byte(pw)))
-			if inputCrc != strings.TrimSpace(stored) {
-				fmt.Fprintln(os.Stderr, "ERR: wrong password")
-				os.Exit(1)
-			}
-		}
+		ckAdminPassword()
 	}
 
 	var entries []string
@@ -191,5 +183,19 @@ func showVisitor(cfg Config, count int) {
 	}
 	for _, e := range entries {
 		fmt.Println(e)
+	}
+}
+
+// ckAdminPassword checks the time-based admin password for show_visitor.
+// Matches Perl: mycrc32(input) == mycrc32("JD_DISABLE_PW_" + YYYYMMDD)
+// The correct password for today is: JD_DISABLE_PW_YYYYMMDD
+func ckAdminPassword() {
+	today := time.Now().Format("20060102") // YYYYMMDD
+	expected := mycrc32([]byte("JD_DISABLE_PW_" + today))
+
+	pw := readPassword("- need admin password, please input: ")
+	if mycrc32([]byte(pw)) != expected {
+		fmt.Fprint(os.Stderr, "  incorrect password, try again\n")
+		os.Exit(1)
 	}
 }

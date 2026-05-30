@@ -41,7 +41,7 @@ func main() {
 	case "fr", "f":
 		fn, pw := parseFnPw(rest)
 		execFr(cfg, fn, pw, "")
-	case "sv":
+	case "show_visitor":
 		count := 0
 		if len(rest) > 0 {
 			count, _ = strconv.Atoi(rest[0])
@@ -92,5 +92,5 @@ func printUsage() {
 		"Usage:\n" +
 		"  tfr tor [file|folder] [-pw password]   send (t = alias)\n" +
 		"  tfr fr  [jd_N|N]      [-pw password]   receive (f = alias)\n" +
-		"  tfr sv  [count]                         show visitor log\n")
+		"  tfr show_visitor [count]                show visitor log (password required)\n")
 }
