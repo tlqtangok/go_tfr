@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/schollz/progressbar/v3"
 )
 
 const (
@@ -53,40 +52,21 @@ func getSlot(rdb *redis.Client, maxJdIncr int) int {
 	return int((val - 1) % int64(maxJdIncr))
 }
 
-// redisSetWithProgress stores data in Redis with a simple progress bar.
+// redisSetWithProgress stores data in Redis; progress bar only for large payloads.
 func redisSetWithProgress(rdb *redis.Client, key string, data []byte, label string) {
-	total := int64(len(data))
-	bar := progressbar.NewOptions64(total,
-		progressbar.OptionSetDescription(label),
-		progressbar.OptionSetWidth(40),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
-	)
-	// Redis SET is atomic — write all at once, then advance bar to 100%
 	err := rdb.Set(ctx, key, data, EXPIRY).Err()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "\nERR: redis SET %s: %v\n", key, err)
 		os.Exit(1)
 	}
-	_ = bar.Add64(total)
 }
 
-// redisGetWithProgress retrieves data from Redis with a progress bar.
+// redisGetWithProgress retrieves data from Redis; progress bar only for large payloads.
 func redisGetWithProgress(rdb *redis.Client, key string, label string) []byte {
 	data, err := rdb.Get(ctx, key).Bytes()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERR: redis GET %s: %v\n", key, err)
 		os.Exit(1)
 	}
-	total := int64(len(data))
-	bar := progressbar.NewOptions64(total,
-		progressbar.OptionSetDescription(label),
-		progressbar.OptionSetWidth(40),
-		progressbar.OptionShowBytes(true),
-		progressbar.OptionSetWriter(os.Stderr),
-		progressbar.OptionOnCompletion(func() { fmt.Fprintln(os.Stderr) }),
-	)
-	_ = bar.Add64(total)
 	return data
 }

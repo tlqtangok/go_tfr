@@ -62,9 +62,9 @@ func main() {
 	}
 
 	switch args[0] {
-	case "tor":
+	case "tor", "t":
 		execTor(cfg, args[1:], password)
-	case "fr":
+	case "fr", "f":
 		execFr(cfg, args[1:], password, outFile)
 	case "show_visitor":
 		showVisitor(cfg, password)

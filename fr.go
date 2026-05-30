@@ -6,57 +6,56 @@ import (
 	"strings"
 )
 
-// execFr implements the `fr` command:
-//   fr [slot]  [-pw password]  [-o outfile]
-// Reads from Redis slot, verifies CRC32, decompresses, writes file.
+// execFr implements the `fr`/`f` command.
+// - No slot arg: auto-uses current jd_incr (latest sent slot)
+// - Accepts both "51" and "jd_51"
+// - Prints content to stdout, saves to file, prints metadata to stderr
 func execFr(cfg Config, args []string, password string, outFile string) {
 	rdb := newRedisClient(cfg)
 	defer rdb.Close()
 
 	checkVersion(rdb)
 
-	// Determine slot: if arg given use it, otherwise read from stdin prompt
-	var slotKey string
+	var slotNum string
+
 	if len(args) > 0 {
-		slotKey = fmt.Sprintf("%s%s", JD_SLOT_PREFIX, args[0])
+		// Strip jd_ prefix if present
+		slotNum = strings.TrimPrefix(args[0], JD_SLOT_PREFIX)
 	} else {
-		// Interactive: ask for slot
-		fmt.Print("Enter slot number: ")
-		var slot int
-		fmt.Scan(&slot)
-		slotKey = fmt.Sprintf("%s%d", JD_SLOT_PREFIX, slot)
+		// No arg: use current jd_incr to find last sent slot
+		val, err := rdb.Get(ctx, JD_INCR_KEY).Int64()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ERR: get jd_incr: %v\n", err)
+			os.Exit(1)
+		}
+		slotNum = fmt.Sprintf("%d", (val-1+int64(cfg.MaxJdIncr))%int64(cfg.MaxJdIncr))
 	}
 
-	// Extract slot number for password/filename key lookup
-	slotNum := strings.TrimPrefix(slotKey, JD_SLOT_PREFIX)
+	slotKey := fmt.Sprintf("%s%s", JD_SLOT_PREFIX, slotNum)
 
 	// Password check
 	pwKey := fmt.Sprintf("%s%s", PW_PREFIX, slotNum)
 	storedPw, err := rdb.Get(ctx, pwKey).Result()
 	if err == nil && storedPw != "" {
-		// Password required
 		if password == "" {
-			fmt.Print("请输入邀请码：")
+			fmt.Fprint(os.Stderr, "请输入邀请码：")
 			fmt.Scan(&password)
 		}
 		inputCrc := fmt.Sprintf("%d", mycrc32([]byte(password)))
 		if inputCrc != strings.TrimSpace(storedPw) {
-			fmt.Println("ERR: wrong password")
+			fmt.Fprintln(os.Stderr, "ERR: wrong password")
 			os.Exit(1)
 		}
 	}
 
-	// Fetch data
-	raw := redisGetWithProgress(rdb, slotKey, fmt.Sprintf("Downloading slot %s", slotNum))
+	raw := redisGetWithProgress(rdb, slotKey, "")
 
-	// Parse header
 	isGzip, filename, storedCrc, payload, err := parseMetaHeader(raw)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ERR: parse header: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Decompress if needed
 	var finalData []byte
 	if isGzip {
 		finalData, err = gunzipBytes(payload)
@@ -68,16 +67,16 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		finalData = payload
 	}
 
-	// CRC32 check
 	computedCrc := mycrc32(finalData)
 	if computedCrc != storedCrc {
 		fmt.Fprintf(os.Stderr, "ERR: CRC32 mismatch: got %d, want %d\n", computedCrc, storedCrc)
 		os.Exit(1)
 	}
 
-	// Write output
 	isFolder := strings.HasPrefix(filename, "FOLDER_")
+
 	if isFolder {
+		// Folder: extract, no stdout content
 		destDir := "."
 		if outFile != "" {
 			destDir = outFile
@@ -87,17 +86,20 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 			os.Exit(1)
 		}
 		folderName := strings.TrimPrefix(filename, "FOLDER_")
-		fmt.Printf("OK: extracted folder %q to %s  size=%d  crc32=%d\n",
-			folderName, destDir, len(finalData), storedCrc)
+		fmt.Fprintf(os.Stderr, "\n- folder extracted to %s/%s\n", destDir, folderName)
 	} else {
-		out := filename
+		// Regular file: print content to stdout, save to file
+		os.Stdout.Write(finalData)
+
+		saveName := filename
 		if outFile != "" {
-			out = outFile
+			saveName = outFile
 		}
-		if err := os.WriteFile(out, finalData, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "ERR: write %s: %v\n", out, err)
+		if err := os.WriteFile(saveName, finalData, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "ERR: write %s: %v\n", saveName, err)
 			os.Exit(1)
 		}
-		fmt.Printf("OK: wrote %s  size=%d  crc32=%d\n", out, len(finalData), storedCrc)
+		fmt.Fprintf(os.Stderr, "\n- file content save to %s\n", saveName)
 	}
 }
+

@@ -5,14 +5,11 @@ import (
 	"io"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// execTor implements the `tor` command:
-//   tor [file|-]  [-pw password]
-// Reads file (or stdin if "-"), optionally gzips, builds metadata header, stores in Redis.
+// execTor implements the tor/t command.
 func execTor(cfg Config, args []string, password string) {
 	rdb := newRedisClient(cfg)
 	defer rdb.Close()
@@ -24,7 +21,7 @@ func execTor(cfg Config, args []string, password string) {
 	var isFolder bool
 
 	if len(args) == 0 || args[0] == "-" {
-		filename = "stdin"
+		filename = "txt.txt"
 		var err error
 		rawData, err = io.ReadAll(os.Stdin)
 		if err != nil {
@@ -58,13 +55,11 @@ func execTor(cfg Config, args []string, password string) {
 
 	_ = isFolder
 
-	// Check size
 	if int64(len(rawData)) > cfg.MaxFileSz {
 		fmt.Fprintf(os.Stderr, "ERR: file too large (%d bytes, max %d)\n", len(rawData), cfg.MaxFileSz)
 		os.Exit(1)
 	}
 
-	// Gzip if needed
 	payload := rawData
 	isGzip := false
 	if len(rawData) > GZIP_THRESHOLD {
@@ -75,46 +70,33 @@ func execTor(cfg Config, args []string, password string) {
 		}
 	}
 
-	crc := mycrc32(rawData) // CRC of original data
-
-	// Get slot
+	crc := mycrc32(rawData)
 	slot := getSlot(rdb, cfg.MaxJdIncr)
 	slotKey := fmt.Sprintf("%s%d", JD_SLOT_PREFIX, slot)
 	fnKey := fmt.Sprintf("%s%d", FNAME_PREFIX, slot)
 
-	// Build full Redis value: header + payload
 	header := buildMetaHeader(isGzip, filename, crc)
 	value := append(header, payload...)
 
-	// Store password CRC if provided
 	if password != "" {
 		pwKey := fmt.Sprintf("%s%d", PW_PREFIX, slot)
 		pwCrc := mycrc32([]byte(password))
 		rdb.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
 	}
 
-	// Store filename key
 	rdb.Set(ctx, fnKey, filename, EXPIRY)
-
-	// Record visitor info
 	recordVisitor(rdb, slot, len(rawData), "tor")
+	redisSetWithProgress(rdb, slotKey, value, "")
 
-	start := time.Now()
-	redisSetWithProgress(rdb, slotKey, value, fmt.Sprintf("Uploading %s", filename))
-	elapsed := time.Since(start)
-
-	fmt.Printf("OK: slot=%d  file=%s  size=%d  gz=%v  crc32=%d  time=%.2fs\n",
-		slot, filename, len(rawData), isGzip, crc, elapsed.Seconds())
+	fmt.Printf("jd_%d\n", slot)
 }
 
-// recordVisitor appends a visitor log entry to Redis list "jd_visitor".
 func recordVisitor(rdb *redis.Client, slot int, size int, op string) {
-	entry := fmt.Sprintf("%s slot=%d size=%d op=%s", time.Now().Format("2006-01-02 15:04:05"), slot, size, op)
+	entry := fmt.Sprintf("slot=%d size=%d op=%s", slot, size, op)
 	rdb.LPush(ctx, "jd_visitor", entry)
-	rdb.LTrim(ctx, "jd_visitor", 0, 999) // keep last 1000
+	rdb.LTrim(ctx, "jd_visitor", 0, 999)
 }
 
-// showVisitor implements the `show_visitor` subcommand (password protected on JDLS side).
 func showVisitor(cfg Config, password string) {
 	rdb := newRedisClient(cfg)
 	defer rdb.Close()
@@ -122,7 +104,6 @@ func showVisitor(cfg Config, password string) {
 	checkVersion(rdb)
 
 	if password != "" {
-		// Check against stored visitor password (key: "VISITOR_PW")
 		stored, err := rdb.Get(ctx, "VISITOR_PW").Result()
 		if err == nil {
 			inputCrc := fmt.Sprintf("%d", mycrc32([]byte(password)))
