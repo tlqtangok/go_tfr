@@ -80,7 +80,7 @@ func loadConfig() Config {
 		val = strings.Trim(val, `"'`)
 
 		switch key {
-		case "redis_host":
+		case "redis_host", "host_name": // host_name is the Perl variable name
 			cfg.Host = val
 		case "redis_port":
 			if p, err := strconv.Atoi(val); err == nil {
