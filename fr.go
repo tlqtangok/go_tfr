@@ -4,9 +4,13 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 )
+
+// jdKeyRe matches valid slot keys: jd_ followed by 1-3 digits (Perl: m/jd_\d{1,3}$/)
+var jdKeyRe = regexp.MustCompile(`^jd_\d{1,3}$`)
 
 // execFr implements the fr/f command (matches Perl exec_fr_process).
 func execFr(cfg Config, args []string, password string, outFile string) {
@@ -18,8 +22,14 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 	var slotNum string
 
 	if len(args) > 0 {
-		// Accept "51" or "jd_51"
-		slotNum = strings.TrimPrefix(args[0], JD_SLOT_PREFIX)
+		arg := args[0]
+		// Must match jd_\d{1,3} exactly, matching Perl: m/${JD_PREFIX}\d{1,3}$/
+		if !jdKeyRe.MatchString(arg) {
+			currentSlot := getCurrentSlotNum(rdb)
+			fmt.Fprintf(os.Stderr, "- argv should be jd_xx, less than jd_%s\n", currentSlot)
+			os.Exit(1)
+		}
+		slotNum = strings.TrimPrefix(arg, JD_SLOT_PREFIX)
 	} else {
 		// No arg: GET jd_incr directly (matches Perl get_jd_xx_from_incr)
 		slotNum = getCurrentSlotNum(rdb)
