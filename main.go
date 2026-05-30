@@ -15,8 +15,8 @@ func main() {
 
 	args := os.Args[1:]
 	if len(args) == 0 {
-		printUsage()
-		os.Exit(0)
+		fmt.Fprintln(os.Stderr, "- argc must >= 1 and first args can only be one of {tor, fr, -v}")
+		os.Exit(1)
 	}
 
 	cmd := args[0]
@@ -48,8 +48,7 @@ func main() {
 		}
 		showVisitor(cfg, count)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command: %s\n", cmd)
-		printUsage()
+		fmt.Fprintln(os.Stderr, "- argc must >= 1 and first args can only be one of {tor, fr, -v}")
 		os.Exit(1)
 	}
 }
