@@ -1,101 +1,82 @@
 #!/usr/bin/env bash
-set -e
+# build.sh — build all TFR binaries for all platforms
+#
+# Usage: ./build.sh
+#
+# Output:
+#   tfr_linux_amd64        Linux x86_64    (UPX --best,  ~2 MB)
+#   tfr_linux_arm64        Linux ARM64     (UPX --best,  ~1.8 MB)
+#   tfr_windows_amd64.exe  Windows x86_64  (UPX --best,  ~2 MB)
+#   tfr_darwin_amd64       macOS Intel     (no UPX,      ~5 MB — macOS rejects packed binaries)
+#   tfr_upx_best           Linux x86_64    (UPX --best,  copy of tfr_linux_amd64)
+#   tfr_upx_brute          Linux x86_64    (UPX --brute, ~1.6 MB, slowest to pack)
 
-# ─────────────────────────────────────────────
-#  TFR Go build script
-#  Usage: ./build.sh [all|linux|windows|darwin|clean]
-# ─────────────────────────────────────────────
+set -euo pipefail
 
-GO=${GO:-$(which go 2>/dev/null || echo "")}
-UPX=$(which upx 2>/dev/null || echo "")
+# ── helpers ───────────────────────────────────────────────────────────────────
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
-
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
 info()  { echo -e "${GREEN}[+]${NC} $*"; }
 warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
-error() { echo -e "${RED}[x]${NC} $*"; exit 1; }
+die()   { echo -e "${RED}[x]${NC} $*" >&2; exit 1; }
 
-# ── env check ──────────────────────────────────
-check_env() {
-    info "Checking environment..."
+require() { command -v "$1" &>/dev/null || die "'$1' not found — please install it first"; }
 
-    [[ -z "$GO" ]] && error "Go not found. Install from https://go.dev/dl/"
-
-    GO_VER=$("$GO" version | grep -oP 'go\K[0-9]+\.[0-9]+')
-    GO_MAJ=$(echo "$GO_VER" | cut -d. -f1)
-    GO_MIN=$(echo "$GO_VER" | cut -d. -f2)
-    if [[ "$GO_MAJ" -lt 1 ]] || ( [[ "$GO_MAJ" -eq 1 ]] && [[ "$GO_MIN" -lt 22 ]] ); then
-        error "Go >= 1.22 required, found go${GO_VER}"
-    fi
-    info "Go: $("$GO" version)"
-
-    if [[ -z "$UPX" ]]; then
-        warn "UPX not found — binaries won't be compressed (apt install upx-ucl)"
-    else
-        info "UPX: $(upx --version 2>&1 | head -1)"
-    fi
+# UPX refuses to write to a file that already exists when using -o.
+# Always remove the destination before calling upx_compress.
+upx_compress() {
+    local level=$1 src=$2 dst=$3
+    rm -f "$dst"
+    upx "$level" -o "$dst" "$src" &>/dev/null
+    info "  $(ls -lh "$dst" | awk '{print $5, $9}')"
 }
 
-# ── deps ───────────────────────────────────────
-fetch_deps() {
-    info "Fetching dependencies..."
-    GOTOOLCHAIN=local "$GO" mod tidy
-}
+# ── prerequisites ─────────────────────────────────────────────────────────────
 
-# ── build one target ───────────────────────────
-build_one() {
-    local OS=$1 ARCH=$2 OUT=$3
-    info "Building ${OS}/${ARCH} → ${OUT}"
-    GOTOOLCHAIN=local CGO_ENABLED=0 GOOS="$OS" GOARCH="$ARCH" \
-        "$GO" build -ldflags="-s -w" -trimpath -o "$OUT" .
+require go
+require upx
 
-    if [[ -n "$UPX" && "$OS" != "darwin" ]]; then
-        upx --best "$OUT" > /dev/null 2>&1 && \
-            info "  UPX compressed: $(du -sh "$OUT" | cut -f1)"
-    else
-        info "  Size: $(du -sh "$OUT" | cut -f1)"
-    fi
-}
+export GOTOOLCHAIN=local
+LDFLAGS="-s -w"
 
-# ── clean ──────────────────────────────────────
-do_clean() {
-    info "Cleaning..."
-    rm -f tfr tfr_linux_amd64 tfr_linux_arm64 tfr_windows_amd64.exe tfr_darwin_amd64
-    info "Done."
-}
+info "Go:  $(go version)"
+info "UPX: $(upx --version 2>&1 | head -1)"
+echo
 
-# ── main ───────────────────────────────────────
-TARGET=${1:-all}
+# ── step 1: compile raw binaries ─────────────────────────────────────────────
 
-case "$TARGET" in
-    clean)
-        do_clean
-        ;;
-    linux)
-        check_env; fetch_deps
-        build_one linux amd64 tfr_linux_amd64
-        build_one linux arm64 tfr_linux_arm64
-        ;;
-    windows)
-        check_env; fetch_deps
-        build_one windows amd64 tfr_windows_amd64.exe
-        ;;
-    darwin)
-        check_env; fetch_deps
-        build_one darwin amd64 tfr_darwin_amd64
-        ;;
-    all)
-        check_env; fetch_deps
-        build_one linux   amd64 tfr_linux_amd64
-        build_one linux   arm64 tfr_linux_arm64
-        build_one windows amd64 tfr_windows_amd64.exe
-        build_one darwin  amd64 tfr_darwin_amd64
-        echo ""
-        info "All builds complete:"
-        ls -lh tfr_linux_amd64 tfr_linux_arm64 tfr_windows_amd64.exe tfr_darwin_amd64 2>/dev/null || true
-        ;;
-    *)
-        echo "Usage: $0 [all|linux|windows|darwin|clean]"
-        exit 1
-        ;;
-esac
+info "[1/3] Compiling for all platforms..."
+
+GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_linux_amd64       . && info "  linux/amd64   ok"
+GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_linux_arm64       . && info "  linux/arm64   ok"
+GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_windows_amd64.exe . && info "  windows/amd64 ok"
+GOOS=darwin  GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o tfr_darwin_amd64       . && info "  darwin/amd64  ok (final — no UPX)"
+
+# ── step 2: UPX --best for Linux/Windows main binaries ───────────────────────
+
+echo
+info "[2/3] Compressing with UPX --best (Linux + Windows)..."
+
+upx_compress --best _raw_linux_amd64       tfr_linux_amd64
+upx_compress --best _raw_linux_arm64       tfr_linux_arm64
+upx_compress --best _raw_windows_amd64.exe tfr_windows_amd64.exe
+
+# tfr_upx_best is identical to tfr_linux_amd64
+cp tfr_linux_amd64 tfr_upx_best
+info "  tfr_upx_best = copy of tfr_linux_amd64"
+
+# ── step 3: UPX --brute (smallest, slow ~2 min) ───────────────────────────────
+
+echo
+info "[3/3] Compressing with UPX --brute (smallest size — takes ~2 minutes)..."
+upx_compress --brute _raw_linux_amd64 tfr_upx_brute
+
+# ── cleanup raw intermediates ─────────────────────────────────────────────────
+
+rm -f _raw_linux_amd64 _raw_linux_arm64 _raw_windows_amd64.exe
+
+# ── summary ───────────────────────────────────────────────────────────────────
+
+echo
+info "All done! Final binaries:"
+ls -lh tfr_linux_amd64 tfr_linux_arm64 tfr_windows_amd64.exe tfr_darwin_amd64 tfr_upx_best tfr_upx_brute
