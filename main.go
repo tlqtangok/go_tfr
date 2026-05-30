@@ -27,7 +27,7 @@ func main() {
 		fmt.Print("- tor-fr\n" +
 			"  version: 2019.04.01\n\n" +
 			"  author: Jidor Tang<tlqtangok@126.com>\n" +
-			"  homepage: http://jesson.tech:10241/tor_fr_readme.html\n\n" +
+			"  homepage: https://github.com/tlqtangok/go_tfr\n\n" +
 			"  usage:\n" +
 			"    tfr tor <filename> -pw <your_password>\n" +
 			"    tfr fr jd_xx\n\n" +
