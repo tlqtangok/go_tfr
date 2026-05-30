@@ -20,7 +20,7 @@ type Config struct {
 func defaultConfig() Config {
 	return Config{
 		Host:      "127.0.0.1",
-		Port:      10240,
+		Port:      6379,
 		MaxFileSz: 52429824, // 50MB + 5KB
 		MaxJdIncr: 256,
 	}

@@ -218,7 +218,7 @@ go build -ldflags="-s -w" -trimpath -o tfr .
 
 ## Performance Benchmark
 
-Tested locally against a remote Redis server (`jesson.tech:10240`) over the internet.  
+Tested locally against a remote Redis server over the internet.  
 Files: 5 MB random text (printable ASCII) and 5 MB random binary.
 
 | Version  | File       | Upload  | Download |
