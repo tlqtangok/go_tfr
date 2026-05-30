@@ -1,0 +1,9 @@
+# Binaries
+tfr
+tfr_linux_amd64
+tfr_linux_arm64
+tfr_windows_amd64.exe
+tfr_darwin_amd64
+
+# Go cache
+*.test
