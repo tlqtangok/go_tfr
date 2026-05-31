@@ -143,20 +143,46 @@ func recordVisitor(rdb *redis.Client, slot int, dataLen int, costSecs float64, o
 	rdb.RPush(ctx, VISITOR_KEY, entry)
 }
 
+const (
+	largeOpTimeout = 30 * time.Minute // large data GET/SET can be slow
+	maxRetries     = 3
+	retryDelay     = 4 * time.Second
+)
+
 func redisSet(rdb *redis.Client, key string, data []byte) {
-	if err := rdb.Set(ctx, key, data, EXPIRY).Err(); err != nil {
-		fmt.Fprintf(os.Stderr, "ERR: redis SET %s: %v\n", key, err)
-		os.Exit(1)
+	cli := rdb.WithTimeout(largeOpTimeout)
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		err = cli.Set(ctx, key, data, EXPIRY).Err()
+		if err == nil {
+			return
+		}
+		if attempt < maxRetries {
+			fmt.Fprintf(os.Stderr, "- redis SET transient error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, err)
+			time.Sleep(retryDelay)
+		}
 	}
+	fmt.Fprintf(os.Stderr, "ERR: redis SET %s: %v\n", key, err)
+	os.Exit(1)
 }
 
 func redisGet(rdb *redis.Client, key string) []byte {
-	data, err := rdb.Get(ctx, key).Bytes()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ERR: redis GET %s: %v\n", key, err)
-		os.Exit(1)
+	cli := rdb.WithTimeout(largeOpTimeout)
+	var data []byte
+	var err error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		data, err = cli.Get(ctx, key).Bytes()
+		if err == nil {
+			return data
+		}
+		if attempt < maxRetries {
+			fmt.Fprintf(os.Stderr, "- redis GET transient error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, err)
+			time.Sleep(retryDelay)
+		}
 	}
-	return data
+	fmt.Fprintf(os.Stderr, "ERR: redis GET %s: %v\n", key, err)
+	os.Exit(1)
+	return nil
 }
 
 func showVisitor(cfg Config, count int) {

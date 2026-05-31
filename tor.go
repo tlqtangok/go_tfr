@@ -92,24 +92,32 @@ func execTor(cfg Config, args []string, password string) {
 	value = append(value, header...)
 	value = append(value, payload...)
 
-	// Pipeline: SET slot + SET filename + optional SET password — single round trip
-	pipe := rdb.Pipeline()
-	pipe.Set(ctx, slotKey, value, EXPIRY)
-	pipe.Set(ctx, fnKey, filename, EXPIRY)
-	if password != "" {
-		pwKey := fmt.Sprintf("%s%d", PW_PREFIX, slot)
-		pwCrc := mycrc32([]byte(password))
-		pipe.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
-	}
-
 	startTime := time.Now()
 
 	// Show progress bar if transfer is expected to take > 10s (matches Perl)
 	estSec := estimateSec(int64(len(value)), netSpeedUpKBs)
+	largeCli := rdb.WithTimeout(largeOpTimeout)
 	var pipeErr error
-	runWithProgress(estSec, func() {
-		_, pipeErr = pipe.Exec(ctx)
-	})
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		pipe := largeCli.Pipeline()
+		pipe.Set(ctx, slotKey, value, EXPIRY)
+		pipe.Set(ctx, fnKey, filename, EXPIRY)
+		if password != "" {
+			pwKey := fmt.Sprintf("%s%d", PW_PREFIX, slot)
+			pwCrc := mycrc32([]byte(password))
+			pipe.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
+		}
+		runWithProgress(estSec, func() {
+			_, pipeErr = pipe.Exec(ctx)
+		})
+		if pipeErr == nil {
+			break
+		}
+		if attempt < maxRetries {
+			fmt.Fprintf(os.Stderr, "- upload transient error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, pipeErr)
+			time.Sleep(retryDelay)
+		}
+	}
 	if pipeErr != nil {
 		fmt.Fprintf(os.Stderr, "ERR: redis pipeline: %v\n", pipeErr)
 		os.Exit(1)
