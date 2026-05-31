@@ -1,5 +1,6 @@
 # Binaries
 tfr
+go_tfr
 tfr_linux_amd64
 tfr_linux_arm64
 tfr_windows_amd64.exe

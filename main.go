@@ -87,7 +87,7 @@ func readPassword(prompt string) string {
 }
 
 func printUsage() {
-	fmt.Print("TFR - Transfer via Redis (Go rewrite)\n" +
+	fmt.Print("TFR - To or From Redis\n" +
 		"Usage:\n" +
 		"  tfr tor [file|folder] [-pw password]   send (t = alias)\n" +
 		"  tfr fr  [jd_N|N]      [-pw password]   receive (f = alias)\n" +

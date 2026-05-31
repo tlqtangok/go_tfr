@@ -128,24 +128,36 @@ func getCurrentSlotNum(rdb *redis.Client) string {
 	return val
 }
 
-// clearAllJdKeys deletes all jd_* / PW_OF_:jd_* / FILENAME_:jd_* keys.
+// clearAllJdKeys deletes all jd_N / PW_OF_:jd_N / FILENAME_:jd_N keys.
 // Called when slot wraps to 0 (matches Perl clear_all_jd_xx_and_pw_prefix).
+// Uses KEYS to match Perl behavior; safe because there are at most ~256*3 of these keys.
+// Only deletes keys where the character after the prefix is a digit (e.g. jd_0..jd_255),
+// never jd_incr — matching Perl filter: if ($e_key =~ m/^${PREFIX}\d/).
 func clearAllJdKeys(rdb *redis.Client) {
-	patterns := []string{"jd_*", "PW_OF_:jd_*", "FILENAME_:jd_*"}
-	for _, pat := range patterns {
-		var cursor uint64
-		for {
-			keys, next, err := rdb.Scan(ctx, cursor, pat, 100).Result()
-			if err != nil {
-				break
+	type group struct {
+		pattern string
+		prefix  string
+	}
+	groups := []group{
+		{"jd_*", JD_SLOT_PREFIX},       // jd_0..jd_255, NOT jd_incr
+		{"PW_OF_:jd_*", PW_PREFIX},     // PW_OF_:jd_N
+		{"FILENAME_:jd_*", FNAME_PREFIX}, // FILENAME_:jd_N
+	}
+	for _, g := range groups {
+		keys, err := rdb.Keys(ctx, g.pattern).Result()
+		if err != nil {
+			continue
+		}
+		var toDelete []string
+		for _, k := range keys {
+			rest := k[len(g.prefix):]
+			if len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9' {
+				toDelete = append(toDelete, k)
 			}
-			if len(keys) > 0 {
-				rdb.Del(ctx, keys...)
-			}
-			cursor = next
-			if cursor == 0 {
-				break
-			}
+		}
+		fmt.Fprintf(os.Stderr, "- delete %d %sxx keys ...\n", len(toDelete), g.prefix)
+		if len(toDelete) > 0 {
+			rdb.Del(ctx, toDelete...)
 		}
 	}
 }

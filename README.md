@@ -25,7 +25,7 @@ Wire-compatible with the Perl version: Go ↔ Perl cross-transfer works seamless
 - Password protection per transfer
 - Folder auto-tar + compress
 - 256 rotating slots (`jd_0` ~ `jd_255`)
-- Visitor log (`sv` command)
+- Visitor log (`show_visitor` command)
 - Cross-platform: Linux / Windows / macOS
 
 ---
@@ -110,7 +110,7 @@ Output: the slot ID, e.g. `jd_42`
 
 ---
 
-### `fr` — Receive (Fetch via Redis)
+### `fr` — Receive (From Redis)
 
 ```bash
 # Receive latest slot (no args)
@@ -132,14 +132,14 @@ tfr f | bash
 
 ---
 
-### `sv` — Show Visitors
+### `show_visitor` — Show Visitors
 
 ```bash
 # Show last 10 visitors
-tfr sv
+tfr show_visitor
 
 # Show last N visitors
-tfr sv 30
+tfr show_visitor 30
 ```
 
 ---
