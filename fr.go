@@ -90,8 +90,15 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		}
 	}
 
+	// Get key size first for progress bar estimation (Perl: $len_of_byte = $R_->strlen($jd_xx))
+	sizeBytes, _ := rdb.StrLen(ctx, slotKey).Result()
+	estSec := estimateSec(sizeBytes, netSpeedDownKBs)
+
 	startTime := time.Now()
-	raw := redisGet(rdb, slotKey)
+	var raw []byte
+	runWithProgress(estSec, func() {
+		raw = redisGet(rdb, slotKey)
+	})
 
 	isGzip, filename, storedCrc, payload, err := parseMetaHeader(raw)
 	if err != nil {

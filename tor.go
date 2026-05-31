@@ -92,8 +92,6 @@ func execTor(cfg Config, args []string, password string) {
 	value = append(value, header...)
 	value = append(value, payload...)
 
-	startTime := time.Now()
-
 	// Pipeline: SET slot + SET filename + optional SET password — single round trip
 	pipe := rdb.Pipeline()
 	pipe.Set(ctx, slotKey, value, EXPIRY)
@@ -103,8 +101,17 @@ func execTor(cfg Config, args []string, password string) {
 		pwCrc := mycrc32([]byte(password))
 		pipe.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "ERR: redis pipeline: %v\n", err)
+
+	startTime := time.Now()
+
+	// Show progress bar if transfer is expected to take > 10s (matches Perl)
+	estSec := estimateSec(int64(len(value)), netSpeedUpKBs)
+	var pipeErr error
+	runWithProgress(estSec, func() {
+		_, pipeErr = pipe.Exec(ctx)
+	})
+	if pipeErr != nil {
+		fmt.Fprintf(os.Stderr, "ERR: redis pipeline: %v\n", pipeErr)
 		os.Exit(1)
 	}
 
