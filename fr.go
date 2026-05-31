@@ -67,6 +67,29 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		}
 	}
 
+	// ── Early overwrite check (Perl does this BEFORE downloading data) ──────
+	// Read filename from the separate FILENAME_:jd_XX key — O(1), fast.
+	fnKey := FNAME_PREFIX + slotNum
+	storedFn, _ := rdb.Get(ctx, fnKey).Result()
+	if storedFn == "" {
+		storedFn = "txt.txt"
+	}
+	earlyIsFolder := strings.HasPrefix(storedFn, "FOLDER_") && strings.HasSuffix(storedFn, ".tar.gz")
+	if earlyIsFolder {
+		folderName := strings.TrimSuffix(strings.TrimPrefix(storedFn, "FOLDER_"), ".tar.gz")
+		if !promptOverwrite(folderName) {
+			os.Exit(1)
+		}
+	} else if storedFn != "txt.txt" {
+		saveName := storedFn
+		if outFile != "" {
+			saveName = outFile
+		}
+		if !promptOverwrite(saveName) {
+			os.Exit(1)
+		}
+	}
+
 	startTime := time.Now()
 	raw := redisGet(rdb, slotKey)
 
@@ -104,9 +127,6 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		if outFile != "" {
 			destDir = outFile
 		}
-		if !promptOverwrite(folderName) {
-			os.Exit(1)
-		}
 		if err := untarToDir(finalData, destDir); err != nil {
 			fmt.Fprintf(os.Stderr, "ERR: untar: %v\n", err)
 			os.Exit(1)
@@ -116,9 +136,6 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		saveName := filename
 		if outFile != "" {
 			saveName = outFile
-		}
-		if saveName != "txt.txt" && !promptOverwrite(saveName) {
-			os.Exit(1)
 		}
 		if err := os.WriteFile(saveName, finalData, 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "ERR: write %s: %v\n", saveName, err)
