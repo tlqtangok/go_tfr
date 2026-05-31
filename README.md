@@ -183,10 +183,10 @@ drwxr-xr-x ...
 
 ## Slots
 
-TFR uses a rotating counter `jd_incr` (0–255) stored in Redis.  
-Each `tfr t` call increments the counter and assigns a slot (`jd_1`, `jd_2`, … `jd_255`, then wraps to `jd_0`).  
-All slot data expires after **3 hours**.  
-When the counter wraps to 0, all existing `jd_*` keys are cleared automatically.
+TFR uses a rotating counter `jd_incr` stored in Redis.  
+Each `tfr t` call increments it and assigns a slot (`jd_1`, `jd_2`, … `jd_255`).  
+On the 256th upload the counter wraps to `jd_0`, **all slot data is cleared automatically**, and the cycle restarts.  
+Slot data has **no automatic expiry** — it persists until overwritten or the counter wraps.
 
 ---
 
