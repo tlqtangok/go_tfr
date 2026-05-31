@@ -5,12 +5,34 @@ import (
 	"os"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/term"
 )
 
 const (
-	progressBarWidth = 30
 	progressMinBytes = 1 * 1024 * 1024 // show bar only for transfers > 1 MB
+	// "Progress [" (10) + bar + "] 100% ETA done    " (18) = fixed overhead of 28 chars
+	progressFixedOverhead = 28
+	progressBarMinWidth   = 10
 )
+
+// termWidth returns the current terminal column count, defaulting to 80.
+func termWidth() int {
+	w, _, err := term.GetSize(int(os.Stderr.Fd()))
+	if err != nil || w <= 0 {
+		return 80
+	}
+	return w
+}
+
+// barWidth returns how many chars the bar fill region should be for the current terminal.
+func barWidth() int {
+	w := termWidth() - progressFixedOverhead
+	if w < progressBarMinWidth {
+		w = progressBarMinWidth
+	}
+	return w
+}
 
 // runWithBytesProgress runs doWork() in a goroutine and shows a progress bar driven by
 // actual bytes transferred (tracked atomically via countingConn). This gives precise,
@@ -56,18 +78,19 @@ func printBytesBar(xferred, total int64, elapsed float64) {
 		pct = 1.0
 	}
 
-	filled := int(pct * float64(progressBarWidth))
-	if filled > progressBarWidth {
-		filled = progressBarWidth
+	bw := barWidth()
+	filled := int(pct * float64(bw))
+	if filled > bw {
+		filled = bw
 	}
-	bar := make([]byte, progressBarWidth)
+	bar := make([]byte, bw)
 	for i := range bar {
 		bar[i] = ' '
 	}
 	for i := 0; i < filled; i++ {
 		bar[i] = '='
 	}
-	if pct < 1.0 && filled < progressBarWidth {
+	if pct < 1.0 && filled < bw {
 		bar[filled] = '>'
 	}
 
@@ -86,5 +109,5 @@ func printBytesBar(xferred, total int64, elapsed float64) {
 		eta = "..."
 	}
 
-	fmt.Fprintf(os.Stderr, "\rProgress [%s] %3d%% ETA %s    ", string(bar), int(pct*100), eta)
+	fmt.Fprintf(os.Stderr, "\rProgress [%s] %3d%% ETA %-7s", string(bar), int(pct*100), eta)
 }
