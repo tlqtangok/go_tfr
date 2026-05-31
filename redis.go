@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -30,6 +32,48 @@ func newRedisClient(cfg Config) *redis.Client {
 		ReadTimeout:  60 * time.Second,
 		WriteTimeout: 60 * time.Second,
 		PoolSize:     5,
+	})
+}
+
+// countingConn wraps net.Conn to count bytes flowing through it for progress tracking.
+type countingConn struct {
+	net.Conn
+	bytesRead    *int64 // may be nil
+	bytesWritten *int64 // may be nil
+}
+
+func (c *countingConn) Read(b []byte) (int, error) {
+	n, err := c.Conn.Read(b)
+	if c.bytesRead != nil {
+		atomic.AddInt64(c.bytesRead, int64(n))
+	}
+	return n, err
+}
+
+func (c *countingConn) Write(b []byte) (int, error) {
+	n, err := c.Conn.Write(b)
+	if c.bytesWritten != nil {
+		atomic.AddInt64(c.bytesWritten, int64(n))
+	}
+	return n, err
+}
+
+// newLargeOpClient creates a single-connection Redis client that counts bytes for progress.
+// Pass non-nil pointers to track reads (download) or writes (upload).
+func newLargeOpClient(cfg Config, bytesRead, bytesWritten *int64) *redis.Client {
+	return redis.NewClient(&redis.Options{
+		Addr:         fmt.Sprintf("%s:%d", cfg.Host, cfg.Port),
+		DialTimeout:  30 * time.Second,
+		ReadTimeout:  largeOpTimeout,
+		WriteTimeout: largeOpTimeout,
+		PoolSize:     1,
+		Dialer: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return &countingConn{Conn: conn, bytesRead: bytesRead, bytesWritten: bytesWritten}, nil
+		},
 	})
 }
 

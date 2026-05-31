@@ -94,11 +94,13 @@ func execTor(cfg Config, args []string, password string) {
 
 	startTime := time.Now()
 
-	// Show progress bar if transfer is expected to take > 10s (matches Perl)
-	estSec := estimateSec(int64(len(value)), netSpeedUpKBs)
-	largeCli := rdb.WithTimeout(largeOpTimeout)
+	// Counting client: tracks actual bytes written on the wire for accurate progress.
+	// totalBytes ≈ len(value); pipeline overhead is negligible.
+	totalUpload := int64(len(value))
 	var pipeErr error
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		var bytesWritten int64
+		largeCli := newLargeOpClient(cfg, nil, &bytesWritten)
 		pipe := largeCli.Pipeline()
 		pipe.Set(ctx, slotKey, value, EXPIRY)
 		pipe.Set(ctx, fnKey, filename, EXPIRY)
@@ -107,14 +109,15 @@ func execTor(cfg Config, args []string, password string) {
 			pwCrc := mycrc32([]byte(password))
 			pipe.Set(ctx, pwKey, fmt.Sprintf("%d", pwCrc), EXPIRY)
 		}
-		runWithProgress(estSec, func() {
+		runWithBytesProgress(totalUpload, &bytesWritten, func() {
 			_, pipeErr = pipe.Exec(ctx)
 		})
+		largeCli.Close()
 		if pipeErr == nil {
 			break
 		}
 		if attempt < maxRetries {
-			fmt.Fprintf(os.Stderr, "- upload transient error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, pipeErr)
+			fmt.Fprintf(os.Stderr, "\n- upload error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, pipeErr)
 			time.Sleep(retryDelay)
 		}
 	}

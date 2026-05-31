@@ -90,15 +90,30 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		}
 	}
 
-	// Get key size first for progress bar estimation (Perl: $len_of_byte = $R_->strlen($jd_xx))
+	// Get key size for accurate progress bar (actual bytes on wire).
 	sizeBytes, _ := rdb.StrLen(ctx, slotKey).Result()
-	estSec := estimateSec(sizeBytes, netSpeedDownKBs)
 
 	startTime := time.Now()
 	var raw []byte
-	runWithProgress(estSec, func() {
-		raw = redisGet(rdb, slotKey)
-	})
+	var getErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		var bytesRead int64
+		largeCli := newLargeOpClient(cfg, &bytesRead, nil)
+		runWithBytesProgress(sizeBytes, &bytesRead, func() {
+			raw, getErr = largeCli.Get(ctx, slotKey).Bytes()
+		})
+		largeCli.Close()
+		if getErr == nil {
+			break
+		}
+		if attempt < maxRetries {
+			fmt.Fprintf(os.Stderr, "\n- download error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, getErr)
+			time.Sleep(retryDelay)
+		} else {
+			fmt.Fprintf(os.Stderr, "\nERR: redis GET %s: %v\n", slotKey, getErr)
+			os.Exit(1)
+		}
+	}
 
 	isGzip, filename, storedCrc, payload, err := parseMetaHeader(raw)
 	if err != nil {
