@@ -1,12 +1,20 @@
-# TFR — Transfer via Redis
+# TFR — To or From Redis
+
+<img src="./img/tor_fr_icon.png" width="80" align="right"/>
 
 [![Release](https://img.shields.io/github/v/release/tlqtangok/go_tfr)](https://github.com/tlqtangok/go_tfr/releases)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
-> **tor-fr** is a productive tool that syncs and shares your files, directories instantly, efficiently and elegantly — via Redis as the transport layer.
+> **TFR** (To or From Redis) is a productive tool that syncs and shares your files, directories instantly, efficiently and elegantly — via Redis as the transport layer.
 
 Go rewrite of the original [Perl TFR](https://github.com/tlqtangok/tfr).  
 Wire-compatible with the Perl version: Go ↔ Perl cross-transfer works seamlessly.
+
+---
+
+![demo](./img/tfr_gif.gif)
+
+*Left: Windows machine · Right: Linux machine — push with `tor`, pull with `fr`*
 
 ---
 
@@ -247,4 +255,4 @@ Original Perl version co-authored with Jesson Liu ([@LjessonS](https://github.co
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE)
+GNU General Public License v3.0 — see [LICENSE](LICENSE)
