@@ -4,6 +4,17 @@ tfr_linux_amd64
 tfr_linux_arm64
 tfr_windows_amd64.exe
 tfr_darwin_amd64
+tfr_upx_best
+tfr_upx_brute
+tfr_upx_brute_test
+tfr_trim
+
+# Test artifacts
+txt.txt
+xxx.txt
+*.txt.bak
+tfr.config.bak
+tfr.config_templ
 
 # Go cache
 *.test
