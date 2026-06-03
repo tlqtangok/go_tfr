@@ -20,7 +20,7 @@ const (
 	FNAME_PREFIX   = "FILENAME_:jd_"
 	PW_PREFIX      = "PW_OF_:jd_"
 	VISITOR_KEY    = "VISITOR_"
-	EXPIRY         = 3 * time.Hour
+	EXPIRY         = 0 // No expiry - data persists until overwritten or slots are cleared
 )
 
 var ctx = context.Background()
