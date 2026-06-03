@@ -184,9 +184,14 @@ drwxr-xr-x ...
 ## Slots
 
 TFR uses a rotating counter `jd_incr` stored in Redis.  
-Each `tfr t` call increments it and assigns a slot (`jd_1`, `jd_2`, … `jd_255`).  
-On the 256th upload the counter wraps to `jd_0`, **all slot data is cleared automatically**, and the cycle restarts.  
+Each `tfr t` call increments it and assigns a slot (`jd_1`, `jd_2`, … `jd_N`).  
+When the counter reaches the configured max (default **256**), it wraps to `jd_0`, **all slot data is cleared automatically**, and the cycle restarts.  
 Slot data has **no automatic expiry** — it persists until overwritten or the counter wraps.
+
+Configure max slot count via `tfr.config`:
+```ini
+$max_jd_incr = 256;    # default
+```
 
 ---
 
