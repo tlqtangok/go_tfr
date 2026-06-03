@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // jdKeyRe matches valid slot keys: jd_ followed by 1-3 digits (Perl: m/jd_\d{1,3}$/)
@@ -92,6 +94,11 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 
 	// Get key size for accurate progress bar (actual bytes on wire).
 	sizeBytes, _ := rdb.StrLen(ctx, slotKey).Result()
+	if sizeBytes == 0 {
+		// Key does not exist (matches Perl: "- should res_raw_text not NULL")
+		fmt.Fprintf(os.Stderr, "- slot data not found or already cleared: %s\n", slotKey)
+		os.Exit(1)
+	}
 
 	startTime := time.Now()
 	var raw []byte
@@ -106,6 +113,12 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		if getErr == nil {
 			break
 		}
+		// redis.Nil means key doesn't exist — fail immediately, don't retry
+		if getErr == redis.Nil {
+			fmt.Fprintf(os.Stderr, "\n- slot data not found or already cleared: %s\n", slotKey)
+			os.Exit(1)
+		}
+		// Other errors: retry (network transient, timeout, etc.)
 		if attempt < maxRetries {
 			fmt.Fprintf(os.Stderr, "\n- download error, retrying in 4s... (%d/%d): %v\n", attempt, maxRetries, getErr)
 			time.Sleep(retryDelay)
