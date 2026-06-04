@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -75,6 +76,11 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 	storedFn, _ := rdb.Get(ctx, fnKey).Result()
 	if storedFn == "" {
 		storedFn = "txt.txt"
+	}
+	// Check if storedFn itself exists on disk (matches Perl gen_overwrite_struct hash_0).
+	// This catches leftover .tar.gz / files from failed prior transfers.
+	if storedFn != "txt.txt" && !promptOverwrite(storedFn) {
+		os.Exit(1)
 	}
 	earlyIsFolder := strings.HasPrefix(storedFn, "FOLDER_") && strings.HasSuffix(storedFn, ".tar.gz")
 	if earlyIsFolder {
@@ -161,6 +167,14 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		destDir := "."
 		if outFile != "" {
 			destDir = outFile
+		}
+		// Second overwrite check (matches Perl do_untar_to_folder_if_needed).
+		// Folder could have been recreated between the early check and now.
+		targetPath := filepath.Join(destDir, folderName)
+		if _, err := os.Stat(targetPath); err == nil {
+			if !promptOverwrite(targetPath) {
+				os.Exit(1)
+			}
 		}
 		if err := untarToDir(finalData, destDir); err != nil {
 			fmt.Fprintf(os.Stderr, "ERR: untar: %v\n", err)
