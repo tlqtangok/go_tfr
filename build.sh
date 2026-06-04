@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# export PATH=$PATH:/usr/local/go/bin
 # build.sh — build all TFR binaries for all platforms
 #
 # Usage: ./build.sh
