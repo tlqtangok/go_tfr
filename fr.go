@@ -49,7 +49,7 @@ func execFr(cfg Config, args []string, password string, outFile string) {
 		for attempt := 1; attempt <= maxAttempts; attempt++ {
 			pw := password
 			if pw == "" {
-				pw = readPassword("\xe8\xaf\xb7\xe8\xbe\x93\xe5\x85\xa5\xe9\x82\x80\xe8\xaf\xb7\xe7\xa0\x81\xef\xbc\x9a")
+				pw = readPassword("- need password, please input: ")
 			}
 			inputCrc := fmt.Sprintf("%d", mycrc32([]byte(pw)))
 			if inputCrc == strings.TrimSpace(storedPw) {
