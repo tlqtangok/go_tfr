@@ -212,7 +212,8 @@ func untarToDir(data []byte, destDir string) error {
 	return nil
 }
 
-// isTextData returns true if data looks like text (matches Perl -T: < 10% non-printable bytes).
+// isTextData returns true if data looks like text (matches Perl -T operator).
+// Perl's -T heuristic: any NUL byte → binary; otherwise < 10% non-printable bytes.
 func isTextData(data []byte) bool {
 	if len(data) == 0 {
 		return true
@@ -220,6 +221,12 @@ func isTextData(data []byte) bool {
 	check := data
 	if len(check) > 512 {
 		check = check[:512]
+	}
+	// Perl -T: a single NUL byte means binary
+	for _, b := range check {
+		if b == 0 {
+			return false
+		}
 	}
 	binary := 0
 	for _, b := range check {
