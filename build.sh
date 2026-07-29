@@ -5,12 +5,11 @@
 # Usage: ./build.sh
 #
 # Output:
-#   tfr_linux_amd64        Linux x86_64    (UPX --best,  ~2 MB)
-#   tfr_linux_arm64        Linux ARM64     (UPX --best,  ~1.8 MB)
-#   tfr_windows_amd64.exe  Windows x86_64  (UPX --best,  ~2 MB)
-#   tfr_darwin_amd64       macOS Intel     (no UPX,      ~5 MB — macOS rejects packed binaries)
-#   tfr_upx_best           Linux x86_64    (UPX --best,  copy of tfr_linux_amd64)
-#   tfr_upx_brute          Linux x86_64    (UPX --brute, ~1.6 MB, slowest to pack)
+#   tfr_linux_amd64        Linux x86_64       (UPX --brute, ~1.8 MB)
+#   tfr_linux_arm64        Linux ARM64        (UPX --brute, ~1.6 MB)
+#   tfr_windows_amd64.exe  Windows x86_64     (UPX --brute, ~1.9 MB)
+#   tfr_darwin_amd64       macOS Intel        (no UPX,      ~5 MB — macOS rejects packed binaries)
+#   tfr_darwin_arm64       macOS Apple Silicon (no UPX,      ~5 MB — macOS rejects packed binaries)
 
 set -euo pipefail
 
@@ -38,6 +37,7 @@ require go
 require upx
 
 export GOTOOLCHAIN=local
+export CGO_ENABLED=0
 LDFLAGS="-s -w"
 
 info "Go:  $(go version)"
@@ -46,31 +46,22 @@ echo
 
 # ── step 1: compile raw binaries ─────────────────────────────────────────────
 
-info "[1/3] Compiling for all platforms..."
+info "[1/2] Compiling for all platforms..."
 
 GOOS=linux   GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_linux_amd64       . && info "  linux/amd64   ok"
 GOOS=linux   GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_linux_arm64       . && info "  linux/arm64   ok"
 GOOS=windows GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o _raw_windows_amd64.exe . && info "  windows/amd64 ok"
 GOOS=darwin  GOARCH=amd64 go build -ldflags="$LDFLAGS" -trimpath -o tfr_darwin_amd64       . && info "  darwin/amd64  ok (final — no UPX)"
+GOOS=darwin  GOARCH=arm64 go build -ldflags="$LDFLAGS" -trimpath -o tfr_darwin_arm64       . && info "  darwin/arm64  ok (final — no UPX)"
 
-# ── step 2: UPX --best for Linux/Windows main binaries ───────────────────────
-
-echo
-info "[2/3] Compressing with UPX --best (Linux + Windows)..."
-
-upx_compress --best _raw_linux_amd64       tfr_linux_amd64
-upx_compress --best _raw_linux_arm64       tfr_linux_arm64
-upx_compress --best _raw_windows_amd64.exe tfr_windows_amd64.exe
-
-# tfr_upx_best is identical to tfr_linux_amd64
-cp tfr_linux_amd64 tfr_upx_best
-info "  tfr_upx_best = copy of tfr_linux_amd64"
-
-# ── step 3: UPX --brute (smallest, slow ~2 min) ───────────────────────────────
+# ── step 2: UPX --brute for Linux/Windows main binaries ──────────────────────
 
 echo
-info "[3/3] Compressing with UPX --brute (smallest size — takes ~2 minutes)..."
-upx_compress --brute _raw_linux_amd64 tfr_upx_brute
+info "[2/2] Compressing with UPX --brute (smallest size — Linux + Windows)..."
+
+upx_compress --brute _raw_linux_amd64       tfr_linux_amd64
+upx_compress --brute _raw_linux_arm64       tfr_linux_arm64
+upx_compress --brute _raw_windows_amd64.exe tfr_windows_amd64.exe
 
 # ── cleanup raw intermediates ─────────────────────────────────────────────────
 
@@ -80,4 +71,4 @@ rm -f _raw_linux_amd64 _raw_linux_arm64 _raw_windows_amd64.exe
 
 echo
 info "All done! Final binaries:"
-ls -lh tfr_linux_amd64 tfr_linux_arm64 tfr_windows_amd64.exe tfr_darwin_amd64 tfr_upx_best tfr_upx_brute
+ls -lh tfr_linux_amd64 tfr_linux_arm64 tfr_windows_amd64.exe tfr_darwin_amd64 tfr_darwin_arm64

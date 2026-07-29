@@ -34,6 +34,9 @@ func execTor(cfg Config, args []string, password string) {
 		}
 	} else {
 		target := args[0]
+		if absTarget, err := filepath.Abs(target); err == nil {
+			target = absTarget
+		}
 		info, err := os.Stat(target)
 		if err != nil {
 			// Non-existent arg: treat as inline string (like Perl)
